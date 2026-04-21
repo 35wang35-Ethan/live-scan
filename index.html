@@ -19,7 +19,6 @@
   .btn { width: 100%; height: 48px; border-radius: 8px; border: none; font-size: 16px; cursor: pointer; margin-top: 10px; font-weight: 500; }
   .btn-scan { background: #f0f0f0; color: #333; }
   .btn-add { background: #222; color: #fff; }
-  .btn-del { background: #fff0f0; color: #c0392b; border: 1px solid #f5c6c6; }
   .btn:active { transform: scale(0.98); }
   .preview-img { width: 100%; border-radius: 8px; margin-top: 10px; display: none; max-height: 200px; object-fit: contain; }
   .summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 16px; }
@@ -38,6 +37,7 @@
   .toast.show { opacity: 1; }
   .hint { font-size: 12px; color: #aaa; text-align: center; margin-top: 8px; }
   .divider { border-top: 1px solid #f0f0f0; margin-top: 16px; padding-top: 16px; }
+  .scanning { opacity: 0.6; pointer-events: none; }
 </style>
 </head>
 <body>
@@ -48,7 +48,7 @@
   <div class="result-label" style="margin-bottom:8px">步驟 1：掃描條碼</div>
 
   <input type="file" id="file-input" accept="image/*" capture="environment" style="display:none" onchange="handleImage(this)">
-  <button class="btn btn-scan" onclick="document.getElementById('file-input').click()">拍照掃描條碼</button>
+  <button class="btn btn-scan" id="scan-btn" onclick="document.getElementById('file-input').click()">拍照掃描條碼</button>
   <p class="hint">點擊後用相機對準條碼拍照</p>
 
   <img id="preview-img" class="preview-img" />
@@ -99,11 +99,10 @@
 
 <div class="toast" id="toast"></div>
 
-<script src="https://unpkg.com/@zxing/library@0.19.1/umd/index.min.js"></script>
 <script>
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbx3e5Q7BZRhHG0IwdmF2y4-fz64kT-3EKXO_5870UUoTIp7j4Bg9GnzHUwa6xWspANApw/exec';
+const VISION_KEY = 'AIzaSyDAOMotRwF16hiaFh_q1QwbHxGTrnDHpvw';
 let currentBarcode = '';
-let allRows = [];
 
 function showToast(msg) {
   const t = document.getElementById('toast');
@@ -120,43 +119,90 @@ function useManual(val) {
   }
 }
 
-function handleImage(input) {
+async function handleImage(input) {
   const file = input.files[0];
   if (!file) return;
+
   const img = document.getElementById('preview-img');
-  const url = URL.createObjectURL(file);
-  img.src = url;
+  img.src = URL.createObjectURL(file);
   img.style.display = 'block';
+
+  const btn = document.getElementById('scan-btn');
+  btn.textContent = '辨識中...';
+  btn.classList.add('scanning');
   showToast('辨識中...');
-  const image = new Image();
-  image.onload = function() {
-    const canvas = document.createElement('canvas');
-    canvas.width = image.width;
-    canvas.height = image.height;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(image, 0, 0);
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    try {
-      const codeReader = new ZXing.MultiFormatReader();
-      const hints = new Map();
-      hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
-      codeReader.setHints(hints);
-      const luminanceSource = new ZXing.RGBLuminanceSource(imageData.data, canvas.width, canvas.height);
-      const binaryBitmap = new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(luminanceSource));
-      const result = codeReader.decode(binaryBitmap);
-      const code = result.getText();
-      currentBarcode = code;
-      document.getElementById('result-code').textContent = code;
-      document.getElementById('result-box').style.display = 'block';
-      document.getElementById('inp-barcode-manual').value = code;
-      document.getElementById('inp-qty').focus();
-      showToast('掃描成功：' + code);
-    } catch(e) {
-      showToast('辨識失敗，請手動輸入條碼');
+
+  try {
+    const base64 = await toBase64(file);
+    const body = {
+      requests: [{
+        image: { content: base64 },
+        features: [{ type: 'TEXT_DETECTION' }, { type: 'BARCODE_DETECTION' }]
+      }]
+    };
+
+    const res = await fetch('https://vision.googleapis.com/v1/images:annotate?key=' + VISION_KEY, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+
+    const data = await res.json();
+    const response = data.responses[0];
+
+    // 先嘗試條碼辨識
+    if (response.localizedObjectAnnotations) {
+      const barcodes = response.localizedObjectAnnotations.filter(o => o.name === 'Barcode');
+      if (barcodes.length > 0) {
+        const text = response.textAnnotations && response.textAnnotations[0] && response.textAnnotations[0].description;
+        if (text) {
+          const lines = text.trim().split('\n');
+          const code = lines.find(l => /^[0-9A-Z\-]{6,}$/.test(l.trim()));
+          if (code) {
+            setBarcode(code.trim());
+            return;
+          }
+        }
+      }
     }
-  };
-  image.src = url;
-  input.value = '';
+
+    // 用文字辨識找條碼數字
+    if (response.textAnnotations && response.textAnnotations.length > 0) {
+      const text = response.textAnnotations[0].description;
+      const lines = text.trim().split('\n');
+      const code = lines.find(l => /^[0-9]{8,}$/.test(l.trim()) || /^[A-Z]{2,}[0-9]{6,}$/.test(l.trim()));
+      if (code) {
+        setBarcode(code.trim());
+        return;
+      }
+    }
+
+    showToast('辨識失敗，請手動輸入條碼');
+  } catch(e) {
+    showToast('辨識失敗：' + e.message);
+  } finally {
+    btn.textContent = '拍照掃描條碼';
+    btn.classList.remove('scanning');
+    input.value = '';
+  }
+}
+
+function setBarcode(code) {
+  currentBarcode = code;
+  document.getElementById('result-code').textContent = code;
+  document.getElementById('result-box').style.display = 'block';
+  document.getElementById('inp-barcode-manual').value = code;
+  document.getElementById('inp-qty').focus();
+  showToast('掃描成功：' + code);
+}
+
+function toBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.split(',')[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
 }
 
 async function addItem() {
@@ -195,21 +241,21 @@ async function deleteRow(rowIndex) {
 async function loadItems() {
   try {
     const res = await fetch(GAS_URL + '?action=get');
-    allRows = await res.json();
+    const allRows = await res.json();
     const tbody = document.getElementById('table-body');
     if (!allRows || allRows.length === 0) {
       tbody.innerHTML = '<tr><td colspan="6" class="empty">尚未有資料</td></tr>';
       updateStats([]); return;
     }
     tbody.innerHTML = [...allRows].reverse().map((r, i) => {
-      const realIndex = allRows.length - i;
+      const realIndex = allRows.length - i + 1;
       return `<tr>
         <td style="font-size:11px;color:#aaa">${String(r[0]).substring(5,16)}</td>
         <td><span style="font-family:monospace;font-size:12px">${r[1]}</span></td>
         <td style="color:#888;font-size:12px">${r[2] || '—'}</td>
         <td style="text-align:right;font-weight:600">${r[3]}</td>
         <td style="font-size:12px;color:#888">${r[4]}</td>
-        <td><button class="del-btn" onclick="deleteRow(${realIndex + 1})">✕</button></td>
+        <td><button class="del-btn" onclick="deleteRow(${realIndex})">✕</button></td>
       </tr>`;
     }).join('');
     updateStats(allRows);
