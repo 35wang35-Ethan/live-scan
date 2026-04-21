@@ -4,13 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>直播選品掃描</title>
-<script src="https://cdn.jsdelivr.net/npm/zxing-js/library/bundles/zxing.umd.min.js"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: sans-serif; background: #f5f5f5; padding: 16px; }
   h2 { font-size: 18px; font-weight: 500; margin-bottom: 16px; color: #222; }
   .card { background: #fff; border-radius: 12px; padding: 16px; margin-bottom: 16px; border: 1px solid #e8e8e8; }
-  .card-title { font-size: 13px; color: #888; margin-bottom: 12px; }
   .scan-area { position: relative; width: 100%; border-radius: 8px; overflow: hidden; background: #000; aspect-ratio: 4/3; }
   #preview { width: 100%; height: 100%; object-fit: cover; display: block; }
   .scan-frame { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
@@ -29,7 +27,7 @@
   .btn-cam { background: #f0f0f0; color: #333; }
   .btn-add { background: #222; color: #fff; }
   .btn:active { transform: scale(0.98); }
-  .summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 16px; }
   .metric { background: #f7f7f7; border-radius: 8px; padding: 10px; text-align: center; }
   .metric-label { font-size: 11px; color: #888; }
   .metric-value { font-size: 22px; font-weight: 600; color: #222; }
@@ -50,7 +48,7 @@
 <h2>直播選品掃描</h2>
 
 <div class="card">
-  <div class="status"><span class="dot" id="dot"></span><span id="status-text">相機未開啟</span></div>
+  <div class="status"><span class="dot" id="dot"></span><span id="status-text">準備中...</span></div>
   <div class="scan-area">
     <video id="preview" autoplay playsinline muted></video>
     <div class="scan-frame"><div class="scan-frame-inner"></div></div>
@@ -82,65 +80,78 @@
   <div class="metric"><div class="metric-label">筆數</div><div class="metric-value" id="stat-rows">0</div></div>
 </div>
 
-<div class="card" style="margin-top:16px">
-  <div class="card-title">即時清單（所有人）</div>
+<div class="card">
+  <div class="result-label" style="margin-bottom:12px">即時清單（所有人）</div>
   <table>
     <thead><tr><th>時間</th><th>條碼</th><th>備註</th><th style="text-align:right">數量</th><th>員工</th></tr></thead>
-    <tbody id="table-body"><tr><td colspan="5" class="empty">載入中...</td></tr></tbody>
+    <tbody id="table-body"><tr><td colspan="5" class="empty">尚未有資料</td></tr></tbody>
   </table>
 </div>
 
 <div class="toast" id="toast"></div>
 
-<script>
+<script type="module">
+import Quagga from 'https://esm.sh/quagga@0.12.1';
+
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbx3e5Q7BZRhHG0IwdmF2y4-fz64kT-3EKXO_5870UUoTIp7j4Bg9GnzHUwa6xWspANApw/exec';
 
-let scanning = false, stream = null, codeReader = null;
-let currentBarcode = '', scanCooldown = false;
+let scanning = false;
+let currentBarcode = '';
+let scanCooldown = false;
+
+document.getElementById('status-text').textContent = '相機未開啟';
 
 function showToast(msg) {
   const t = document.getElementById('toast');
   t.textContent = msg;
   t.classList.add('show');
-  setTimeout(() => t.classList.remove('show'), 2000);
+  setTimeout(() => t.classList.remove('show'), 2500);
 }
 
-async function toggleCamera() {
+window.toggleCamera = function() {
   scanning ? stopCamera() : startCamera();
 }
 
-async function startCamera() {
-  try {
-    if (typeof ZXing === 'undefined') { showToast('掃描器載入中，請稍後'); return; }
-    codeReader = new ZXing.BrowserMultiFormatReader();
-    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-    const video = document.getElementById('preview');
-    video.srcObject = stream;
+function startCamera() {
+  Quagga.init({
+    inputStream: {
+      name: 'Live',
+      type: 'LiveStream',
+      target: document.getElementById('preview'),
+      constraints: { facingMode: 'environment' }
+    },
+    decoder: {
+      readers: ['ean_reader', 'ean_8_reader', 'code_128_reader', 'code_39_reader', 'upc_reader']
+    }
+  }, function(err) {
+    if (err) {
+      showToast('無法開啟相機，請確認已授權');
+      return;
+    }
+    Quagga.start();
     scanning = true;
     document.getElementById('cam-btn').textContent = '關閉相機';
     document.getElementById('dot').classList.add('active');
     document.getElementById('status-text').textContent = '掃描中，請將條碼對準框內';
     document.getElementById('scan-line').classList.add('active');
-    codeReader.decodeFromStream(stream, video, (result) => {
-      if (result && !scanCooldown) {
-        const code = result.getText();
-        currentBarcode = code;
-        document.getElementById('result-code').textContent = code;
-        document.getElementById('result-box').style.display = 'block';
-        document.getElementById('status-text').textContent = '條碼已讀取，請輸入數量';
-        document.getElementById('inp-qty').focus();
-        scanCooldown = true;
-        setTimeout(() => { scanCooldown = false; }, 3000);
-        showToast('條碼掃描成功');
-      }
-    });
-  } catch(e) { showToast('無法開啟相機，請確認已授權'); }
+  });
+
+  Quagga.onDetected(function(result) {
+    if (scanCooldown) return;
+    const code = result.codeResult.code;
+    currentBarcode = code;
+    document.getElementById('result-code').textContent = code;
+    document.getElementById('result-box').style.display = 'block';
+    document.getElementById('status-text').textContent = '條碼已讀取，請輸入數量';
+    document.getElementById('inp-qty').focus();
+    scanCooldown = true;
+    showToast('條碼掃描成功：' + code);
+    setTimeout(() => { scanCooldown = false; }, 3000);
+  });
 }
 
 function stopCamera() {
-  if (codeReader) { try { codeReader.reset(); } catch(e){} codeReader = null; }
-  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
-  document.getElementById('preview').srcObject = null;
+  Quagga.stop();
   scanning = false;
   document.getElementById('cam-btn').textContent = '開啟相機掃描條碼';
   document.getElementById('dot').classList.remove('active');
@@ -148,7 +159,7 @@ function stopCamera() {
   document.getElementById('scan-line').classList.remove('active');
 }
 
-async function addItem() {
+window.addItem = async function() {
   const barcode = currentBarcode;
   const qty = parseInt(document.getElementById('inp-qty').value);
   const note = document.getElementById('inp-note').value.trim();
@@ -158,7 +169,7 @@ async function addItem() {
   if (!staff) { showToast('請輸入你的名字'); return; }
   showToast('儲存中...');
   try {
-    await fetch(GAS_URL + '?action=add&barcode=' + encodeURIComponent(barcode) + '&note=' + encodeURIComponent(note) + '&qty=' + qty + '&staff=' + encodeURIComponent(staff));
+    await fetch(GAS_URL + '?action=add&barcode=' + encodeURIComponent(barcode) + '&note=' + encodeURIComponent(note) + '&qty=' + qty + '&staff=' + encodeURIComponent(staff), { mode: 'no-cors' });
     showToast('已加入清單！');
     document.getElementById('inp-qty').value = '';
     document.getElementById('inp-note').value = '';
