@@ -127,8 +127,7 @@ function resizeAndEncode(file) {
           if (w > h) { h = Math.round(h * max / w); w = max; }
           else { w = Math.round(w * max / h); h = max; }
         }
-        canvas.width = w;
-        canvas.height = h;
+        canvas.width = w; canvas.height = h;
         canvas.getContext('2d').drawImage(img, 0, 0, w, h);
         resolve(canvas.toDataURL('image/jpeg', 0.9).split(',')[1]);
       };
@@ -138,6 +137,19 @@ function resizeAndEncode(file) {
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
+}
+
+function extractBarcode(text) {
+  const lines = text.split('\n').map(l => l.replace(/\s/g, ''));
+  const found = lines.find(l =>
+    /^[0-9]{8,13}$/.test(l) ||
+    /^[A-Z]{2,}[0-9]{6,}$/.test(l) ||
+    /^[0-9]{4,}[A-Z]{1,}[0-9]{4,}$/.test(l)
+  );
+  if (found) return found;
+  const allText = text.replace(/\s/g, '');
+  const match = allText.match(/[0-9]{10,13}/);
+  return match ? match[0] : null;
 }
 
 async function handleImage(input) {
@@ -167,16 +179,8 @@ async function handleImage(input) {
     const response = data.responses[0];
     if (response.textAnnotations && response.textAnnotations.length > 0) {
       const text = response.textAnnotations[0].description;
-      const lines = text.trim().split('\n').map(l => l.trim());
-      const code = lines.find(l =>
-        /^[0-9]{8,}$/.test(l) ||
-        /^[A-Z]{2,}[0-9]{6,}$/.test(l) ||
-        /^[0-9]{4,}[A-Z]{1,}[0-9]{4,}$/.test(l)
-      );
-      if (code) {
-        setBarcode(code);
-        return;
-      }
+      const code = extractBarcode(text);
+      if (code) { setBarcode(code); return; }
     }
     showToast('辨識失敗，請手動輸入條碼');
   } catch(e) {
