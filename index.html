@@ -94,10 +94,21 @@
 
 <div class="toast" id="toast"></div>
 
-<script src="quagga.min.js"></script>
-<script>
+<script type="module">
+import { BrowserMultiFormatReader } from 'https://esm.sh/@zxing/browser@0.1.4';
+import { DecodeHintType, BarcodeFormat } from 'https://esm.sh/@zxing/library@0.19.1';
+
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbx3e5Q7BZRhHG0IwdmF2y4-fz64kT-3EKXO_5870UUoTIp7j4Bg9GnzHUwa6xWspANApw/exec';
 let currentBarcode = '';
+
+const hints = new Map();
+hints.set(DecodeHintType.POSSIBLE_FORMATS, [
+  BarcodeFormat.EAN_13, BarcodeFormat.EAN_8,
+  BarcodeFormat.CODE_128, BarcodeFormat.CODE_39,
+  BarcodeFormat.UPC_A, BarcodeFormat.UPC_E
+]);
+hints.set(DecodeHintType.TRY_HARDER, true);
+const reader = new BrowserMultiFormatReader(hints);
 
 function showToast(msg) {
   const t = document.getElementById('toast');
@@ -106,7 +117,7 @@ function showToast(msg) {
   setTimeout(() => t.classList.remove('show'), 2500);
 }
 
-function useManual(val) {
+window.useManual = function(val) {
   currentBarcode = val.trim();
   if (currentBarcode) {
     document.getElementById('result-code').textContent = currentBarcode;
@@ -114,7 +125,7 @@ function useManual(val) {
   }
 }
 
-function handleImage(input) {
+window.handleImage = async function(input) {
   const file = input.files[0];
   if (!file) return;
   const url = URL.createObjectURL(file);
@@ -125,23 +136,16 @@ function handleImage(input) {
   btn.textContent = '辨識中...';
   btn.classList.add('btn-disabled');
   showToast('辨識中...');
-
-  Quagga.decodeSingle({
-    decoder: {
-      readers: ['ean_reader', 'ean_8_reader', 'code_128_reader', 'code_39_reader', 'upc_reader', 'upc_e_reader']
-    },
-    locate: true,
-    src: url
-  }, function(result) {
+  try {
+    const result = await reader.decodeFromImageUrl(url);
+    setBarcode(result.getText());
+  } catch(e) {
+    showToast('辨識失敗，請重拍或手動輸入');
+  } finally {
     btn.textContent = '拍照掃描條碼';
     btn.classList.remove('btn-disabled');
     input.value = '';
-    if (result && result.codeResult) {
-      setBarcode(result.codeResult.code);
-    } else {
-      showToast('辨識失敗，請重拍或手動輸入');
-    }
-  });
+  }
 }
 
 function setBarcode(code) {
@@ -153,7 +157,7 @@ function setBarcode(code) {
   showToast('掃描成功：' + code);
 }
 
-async function addItem() {
+window.addItem = async function() {
   const barcode = currentBarcode;
   const qty = parseInt(document.getElementById('inp-qty').value);
   const note = document.getElementById('inp-note').value.trim();
@@ -176,7 +180,7 @@ async function addItem() {
   } catch(e) { showToast('儲存失敗，請重試'); }
 }
 
-async function deleteRow(rowIndex) {
+window.deleteRow = async function(rowIndex) {
   if (!confirm('確定要刪除這筆資料嗎？')) return;
   showToast('刪除中...');
   try {
