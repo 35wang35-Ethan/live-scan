@@ -38,6 +38,7 @@
   .toast.show { opacity: 1; }
   .hint { font-size: 12px; color: #aaa; text-align: center; margin-top: 8px; }
   .divider { border-top: 1px solid #f0f0f0; margin-top: 16px; padding-top: 16px; }
+  .debug { background: #fff8e6; border: 1px solid #ffd, border-radius: 8px; padding: 10px; margin-top: 10px; font-size: 12px; color: #666; display: none; word-break: break-all; }
 </style>
 </head>
 <body>
@@ -50,6 +51,7 @@
   <button class="btn btn-scan" id="scan-btn" onclick="document.getElementById('file-input').click()">拍照掃描條碼</button>
   <p class="hint">點擊後用相機對準條碼拍照</p>
   <img id="preview-img" class="preview-img" />
+  <div id="debug" class="debug"></div>
   <div class="result-box" id="result-box">
     <div class="result-label">掃描到的條碼</div>
     <div class="result-code" id="result-code">—</div>
@@ -96,7 +98,7 @@
 
 <script>
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbx3e5Q7BZRhHG0IwdmF2y4-fz64kT-3EKXO_5870UUoTIp7j4Bg9GnzHUwa6xWspANApw/exec';
-const VISION_KEY = 'AIzaSyDAOMotRwF16hiaFh_q1QwbHxGTrnDHpvw';
+const VISION_KEY = 'AIzaSyBb9jbsDLtmYUigZV5tB6sXh9Zd6B130zo';
 let currentBarcode = '';
 
 function showToast(msg) {
@@ -104,6 +106,12 @@ function showToast(msg) {
   t.textContent = msg;
   t.classList.add('show');
   setTimeout(() => t.classList.remove('show'), 2500);
+}
+
+function showDebug(msg) {
+  const d = document.getElementById('debug');
+  d.style.display = 'block';
+  d.textContent = msg;
 }
 
 function useManual(val) {
@@ -176,15 +184,20 @@ async function handleImage(input) {
       body: JSON.stringify(body)
     });
     const data = await res.json();
-    const response = data.responses[0];
-    if (response.textAnnotations && response.textAnnotations.length > 0) {
+    showDebug('API狀態:' + res.status + ' | ' + JSON.stringify(data).substring(0, 200));
+    const response = data.responses && data.responses[0];
+    if (response && response.textAnnotations && response.textAnnotations.length > 0) {
       const text = response.textAnnotations[0].description;
       const code = extractBarcode(text);
       if (code) { setBarcode(code); return; }
+      showDebug('文字已讀取但找不到條碼格式：' + text.substring(0, 200));
+      showToast('找不到條碼，請手動輸入');
+    } else {
+      showToast('辨識失敗，請手動輸入條碼');
     }
-    showToast('辨識失敗，請手動輸入條碼');
   } catch(e) {
-    showToast('辨識失敗，請手動輸入');
+    showDebug('錯誤：' + e.message);
+    showToast('辨識失敗：' + e.message);
   } finally {
     btn.textContent = '拍照掃描條碼';
     btn.classList.remove('btn-disabled');
@@ -220,6 +233,7 @@ async function addItem() {
     document.getElementById('result-code').textContent = '—';
     document.getElementById('result-box').style.display = 'none';
     document.getElementById('preview-img').style.display = 'none';
+    document.getElementById('debug').style.display = 'none';
     loadItems();
   } catch(e) { showToast('儲存失敗，請重試'); }
 }
