@@ -20,8 +20,7 @@
   .btn-scan { background: #f0f0f0; color: #333; }
   .btn-add { background: #222; color: #fff; }
   .btn:active { transform: scale(0.98); }
-  .btn-manual { background: none; border: none; color: #378add; font-size: 13px; cursor: pointer; margin-top: 8px; display: block; width: 100%; text-align: center; padding: 6px; }
-  .preview-img { width: 100%; border-radius: 8px; margin-top: 10px; display: none; max-height: 200px; object-fit: cover; }
+  .preview-img { width: 100%; border-radius: 8px; margin-top: 10px; display: none; max-height: 200px; object-fit: contain; }
   .summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 16px; }
   .metric { background: #f7f7f7; border-radius: 8px; padding: 10px; text-align: center; }
   .metric-label { font-size: 11px; color: #888; }
@@ -33,9 +32,8 @@
   .empty { text-align: center; padding: 24px; color: #bbb; font-size: 13px; }
   .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #222; color: #fff; padding: 10px 20px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity 0.2s; pointer-events: none; white-space: nowrap; z-index: 99; }
   .toast.show { opacity: 1; }
-  .manual-input { display: none; margin-top: 10px; }
-  .manual-input.show { display: block; }
   .hint { font-size: 12px; color: #aaa; text-align: center; margin-top: 8px; }
+  .divider { border-top: 1px solid #f0f0f0; margin-top: 16px; padding-top: 16px; }
 </style>
 </head>
 <body>
@@ -56,16 +54,12 @@
     <div class="result-code" id="result-code">—</div>
   </div>
 
-  <button class="btn-manual" onclick="toggleManual()">手動輸入條碼</button>
-  <div class="manual-input" id="manual-input">
-    <div class="field">
-      <label>手動輸入條碼</label>
-      <input type="text" id="inp-barcode-manual" placeholder="例：4710742716980" />
-    </div>
-    <button class="btn btn-scan" style="margin-top:8px" onclick="useManual()">確認使用此條碼</button>
+  <div class="field" style="margin-top:16px">
+    <label>或手動輸入條碼</label>
+    <input type="text" id="inp-barcode-manual" placeholder="例：4710742716980" oninput="useManual(this.value)" />
   </div>
 
-  <div style="border-top: 1px solid #f0f0f0; margin-top: 16px; padding-top: 16px;">
+  <div class="divider">
     <div class="result-label" style="margin-bottom:8px">步驟 2：填寫資料</div>
     <div class="field">
       <label>你的名字</label>
@@ -99,8 +93,7 @@
 
 <div class="toast" id="toast"></div>
 
-<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/zxing-wasm/dist/iife/zxing_wasm.js"></script>
+<script src="https://unpkg.com/@zxing/library@0.19.1/umd/index.min.js"></script>
 <script>
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbx3e5Q7BZRhHG0IwdmF2y4-fz64kT-3EKXO_5870UUoTIp7j4Bg9GnzHUwa6xWspANApw/exec';
 let currentBarcode = '';
@@ -112,45 +105,49 @@ function showToast(msg) {
   setTimeout(() => t.classList.remove('show'), 2500);
 }
 
-function toggleManual() {
-  const el = document.getElementById('manual-input');
-  el.classList.toggle('show');
+function useManual(val) {
+  currentBarcode = val.trim();
+  if (currentBarcode) {
+    document.getElementById('result-code').textContent = currentBarcode;
+    document.getElementById('result-box').style.display = 'block';
+  }
 }
 
-function useManual() {
-  const val = document.getElementById('inp-barcode-manual').value.trim();
-  if (!val) { showToast('請輸入條碼'); return; }
-  currentBarcode = val;
-  document.getElementById('result-code').textContent = val;
-  document.getElementById('result-box').style.display = 'block';
-  document.getElementById('manual-input').classList.remove('show');
-  document.getElementById('inp-qty').focus();
-  showToast('已設定條碼：' + val);
-}
-
-async function handleImage(input) {
+function handleImage(input) {
   const file = input.files[0];
   if (!file) return;
   const img = document.getElementById('preview-img');
-  img.src = URL.createObjectURL(file);
+  const url = URL.createObjectURL(file);
+  img.src = url;
   img.style.display = 'block';
   showToast('辨識中...');
-  try {
-    const { readBarcodesFromImageFile, setZXingModuleOverrides } = ZXingWASM;
-    const results = await readBarcodesFromImageFile(file, { tryHarder: true });
-    if (results && results.length > 0) {
-      const code = results[0].text;
+
+  const image = new Image();
+  image.onload = function() {
+    const canvas = document.createElement('canvas');
+    canvas.width = image.width;
+    canvas.height = image.height;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(image, 0, 0);
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+    try {
+      const codeReader = new ZXing.MultiFormatReader();
+      const luminanceSource = new ZXing.RGBLuminanceSource(imageData.data, canvas.width, canvas.height);
+      const binaryBitmap = new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(luminanceSource));
+      const result = codeReader.decode(binaryBitmap);
+      const code = result.getText();
       currentBarcode = code;
       document.getElementById('result-code').textContent = code;
       document.getElementById('result-box').style.display = 'block';
+      document.getElementById('inp-barcode-manual').value = code;
       document.getElementById('inp-qty').focus();
       showToast('掃描成功：' + code);
-    } else {
-      showToast('無法辨識，請重拍或手動輸入');
+    } catch(e) {
+      showToast('辨識失敗，請手動輸入條碼');
     }
-  } catch(e) {
-    showToast('辨識失敗，請手動輸入條碼');
-  }
+  };
+  image.src = url;
   input.value = '';
 }
 
@@ -159,7 +156,7 @@ async function addItem() {
   const qty = parseInt(document.getElementById('inp-qty').value);
   const note = document.getElementById('inp-note').value.trim();
   const staff = document.getElementById('inp-staff').value.trim();
-  if (!barcode) { showToast('請先掃描條碼'); return; }
+  if (!barcode) { showToast('請先掃描或輸入條碼'); return; }
   if (!qty || qty < 1) { showToast('請輸入有效數量'); return; }
   if (!staff) { showToast('請輸入你的名字'); return; }
   showToast('儲存中...');
@@ -168,7 +165,7 @@ async function addItem() {
     showToast('已加入清單！');
     document.getElementById('inp-qty').value = '';
     document.getElementById('inp-note').value = '';
-    document.getElementById('inp-note').value = '';
+    document.getElementById('inp-barcode-manual').value = '';
     currentBarcode = '';
     document.getElementById('result-code').textContent = '—';
     document.getElementById('result-box').style.display = 'none';
