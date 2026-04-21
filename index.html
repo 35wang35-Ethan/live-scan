@@ -38,7 +38,6 @@
   .toast.show { opacity: 1; }
   .hint { font-size: 12px; color: #aaa; text-align: center; margin-top: 8px; }
   .divider { border-top: 1px solid #f0f0f0; margin-top: 16px; padding-top: 16px; }
-  .debug { background: #fff8e6; border: 1px solid #ffd, border-radius: 8px; padding: 10px; margin-top: 10px; font-size: 12px; color: #666; display: none; word-break: break-all; }
 </style>
 </head>
 <body>
@@ -49,9 +48,8 @@
   <div class="result-label" style="margin-bottom:8px">步驟 1：掃描條碼</div>
   <input type="file" id="file-input" accept="image/*" capture="environment" style="display:none" onchange="handleImage(this)">
   <button class="btn btn-scan" id="scan-btn" onclick="document.getElementById('file-input').click()">拍照掃描條碼</button>
-  <p class="hint">點擊後用相機對準條碼拍照</p>
+  <p class="hint">拍照時讓條碼佔畫面一半以上，效果最好</p>
   <img id="preview-img" class="preview-img" />
-  <div id="debug" class="debug"></div>
   <div class="result-box" id="result-box">
     <div class="result-label">掃描到的條碼</div>
     <div class="result-code" id="result-code">—</div>
@@ -96,9 +94,9 @@
 
 <div class="toast" id="toast"></div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/quagga/0.12.1/quagga.min.js"></script>
 <script>
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbx3e5Q7BZRhHG0IwdmF2y4-fz64kT-3EKXO_5870UUoTIp7j4Bg9GnzHUwa6xWspANApw/exec';
-const VISION_KEY = 'AIzaSyBb9jbsDLtmYUigZV5tB6sXh9Zd6B130zo';
 let currentBarcode = '';
 
 function showToast(msg) {
@@ -106,12 +104,6 @@ function showToast(msg) {
   t.textContent = msg;
   t.classList.add('show');
   setTimeout(() => t.classList.remove('show'), 2500);
-}
-
-function showDebug(msg) {
-  const d = document.getElementById('debug');
-  d.style.display = 'block';
-  d.textContent = msg;
 }
 
 function useManual(val) {
@@ -122,87 +114,34 @@ function useManual(val) {
   }
 }
 
-function resizeAndEncode(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        const max = 1200;
-        let w = img.width, h = img.height;
-        if (w > max || h > max) {
-          if (w > h) { h = Math.round(h * max / w); w = max; }
-          else { w = Math.round(w * max / h); h = max; }
-        }
-        canvas.width = w; canvas.height = h;
-        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-        resolve(canvas.toDataURL('image/jpeg', 0.9).split(',')[1]);
-      };
-      img.onerror = reject;
-      img.src = reader.result;
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
-
-function extractBarcode(text) {
-  const lines = text.split('\n').map(l => l.replace(/\s/g, ''));
-  const found = lines.find(l =>
-    /^[0-9]{8,13}$/.test(l) ||
-    /^[A-Z]{2,}[0-9]{6,}$/.test(l) ||
-    /^[0-9]{4,}[A-Z]{1,}[0-9]{4,}$/.test(l)
-  );
-  if (found) return found;
-  const allText = text.replace(/\s/g, '');
-  const match = allText.match(/[0-9]{10,13}/);
-  return match ? match[0] : null;
-}
-
-async function handleImage(input) {
+function handleImage(input) {
   const file = input.files[0];
   if (!file) return;
+  const url = URL.createObjectURL(file);
   const img = document.getElementById('preview-img');
-  img.src = URL.createObjectURL(file);
+  img.src = url;
   img.style.display = 'block';
   const btn = document.getElementById('scan-btn');
   btn.textContent = '辨識中...';
   btn.classList.add('btn-disabled');
   showToast('辨識中...');
-  try {
-    const base64 = await resizeAndEncode(file);
-    const body = {
-      requests: [{
-        image: { content: base64 },
-        features: [{ type: 'TEXT_DETECTION' }]
-      }]
-    };
-    const res = await fetch('https://vision.googleapis.com/v1/images:annotate?key=' + VISION_KEY, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
-    const data = await res.json();
-    showDebug('API狀態:' + res.status + ' | ' + JSON.stringify(data).substring(0, 200));
-    const response = data.responses && data.responses[0];
-    if (response && response.textAnnotations && response.textAnnotations.length > 0) {
-      const text = response.textAnnotations[0].description;
-      const code = extractBarcode(text);
-      if (code) { setBarcode(code); return; }
-      showDebug('文字已讀取但找不到條碼格式：' + text.substring(0, 200));
-      showToast('找不到條碼，請手動輸入');
-    } else {
-      showToast('辨識失敗，請手動輸入條碼');
-    }
-  } catch(e) {
-    showDebug('錯誤：' + e.message);
-    showToast('辨識失敗：' + e.message);
-  } finally {
+
+  Quagga.decodeSingle({
+    decoder: {
+      readers: ['ean_reader', 'ean_8_reader', 'code_128_reader', 'code_39_reader', 'upc_reader', 'upc_e_reader']
+    },
+    locate: true,
+    src: url
+  }, function(result) {
     btn.textContent = '拍照掃描條碼';
     btn.classList.remove('btn-disabled');
     input.value = '';
-  }
+    if (result && result.codeResult) {
+      setBarcode(result.codeResult.code);
+    } else {
+      showToast('辨識失敗，請重拍或手動輸入');
+    }
+  });
 }
 
 function setBarcode(code) {
@@ -233,7 +172,6 @@ async function addItem() {
     document.getElementById('result-code').textContent = '—';
     document.getElementById('result-box').style.display = 'none';
     document.getElementById('preview-img').style.display = 'none';
-    document.getElementById('debug').style.display = 'none';
     loadItems();
   } catch(e) { showToast('儲存失敗，請重試'); }
 }
