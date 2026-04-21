@@ -19,16 +19,20 @@
   .btn { width: 100%; height: 48px; border-radius: 8px; border: none; font-size: 16px; cursor: pointer; margin-top: 10px; font-weight: 500; }
   .btn-scan { background: #f0f0f0; color: #333; }
   .btn-add { background: #222; color: #fff; }
+  .btn-del { background: #fff0f0; color: #c0392b; border: 1px solid #f5c6c6; }
   .btn:active { transform: scale(0.98); }
   .preview-img { width: 100%; border-radius: 8px; margin-top: 10px; display: none; max-height: 200px; object-fit: contain; }
   .summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 16px; }
   .metric { background: #f7f7f7; border-radius: 8px; padding: 10px; text-align: center; }
   .metric-label { font-size: 11px; color: #888; }
   .metric-value { font-size: 22px; font-weight: 600; color: #222; }
-  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 400px; }
   th { text-align: left; padding: 8px; color: #888; font-weight: 500; border-bottom: 1px solid #f0f0f0; }
   td { padding: 10px 8px; border-bottom: 1px solid #f0f0f0; color: #333; }
   tr:last-child td { border-bottom: none; }
+  .del-btn { background: none; border: none; color: #ccc; font-size: 16px; cursor: pointer; padding: 4px 8px; border-radius: 6px; }
+  .del-btn:active { background: #fff0f0; color: #c0392b; }
   .empty { text-align: center; padding: 24px; color: #bbb; font-size: 13px; }
   .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #222; color: #fff; padding: 10px 20px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity 0.2s; pointer-events: none; white-space: nowrap; z-index: 99; }
   .toast.show { opacity: 1; }
@@ -85,10 +89,12 @@
 
 <div class="card">
   <div class="result-label" style="margin-bottom:12px">即時清單（所有人）</div>
-  <table>
-    <thead><tr><th>時間</th><th>條碼</th><th>備註</th><th style="text-align:right">數量</th><th>員工</th></tr></thead>
-    <tbody id="table-body"><tr><td colspan="5" class="empty">尚未有資料</td></tr></tbody>
-  </table>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>時間</th><th>條碼</th><th>備註</th><th style="text-align:right">數量</th><th>員工</th><th></th></tr></thead>
+      <tbody id="table-body"><tr><td colspan="6" class="empty">尚未有資料</td></tr></tbody>
+    </table>
+  </div>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -97,6 +103,7 @@
 <script>
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbx3e5Q7BZRhHG0IwdmF2y4-fz64kT-3EKXO_5870UUoTIp7j4Bg9GnzHUwa6xWspANApw/exec';
 let currentBarcode = '';
+let allRows = [];
 
 function showToast(msg) {
   const t = document.getElementById('toast');
@@ -121,7 +128,6 @@ function handleImage(input) {
   img.src = url;
   img.style.display = 'block';
   showToast('辨識中...');
-
   const image = new Image();
   image.onload = function() {
     const canvas = document.createElement('canvas');
@@ -130,9 +136,11 @@ function handleImage(input) {
     const ctx = canvas.getContext('2d');
     ctx.drawImage(image, 0, 0);
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-
     try {
       const codeReader = new ZXing.MultiFormatReader();
+      const hints = new Map();
+      hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+      codeReader.setHints(hints);
       const luminanceSource = new ZXing.RGBLuminanceSource(imageData.data, canvas.width, canvas.height);
       const binaryBitmap = new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(luminanceSource));
       const result = codeReader.decode(binaryBitmap);
@@ -174,24 +182,37 @@ async function addItem() {
   } catch(e) { showToast('儲存失敗，請重試'); }
 }
 
+async function deleteRow(rowIndex) {
+  if (!confirm('確定要刪除這筆資料嗎？')) return;
+  showToast('刪除中...');
+  try {
+    await fetch(GAS_URL + '?action=delete&row=' + rowIndex, { mode: 'no-cors' });
+    showToast('已刪除！');
+    loadItems();
+  } catch(e) { showToast('刪除失敗，請重試'); }
+}
+
 async function loadItems() {
   try {
     const res = await fetch(GAS_URL + '?action=get');
-    const rows = await res.json();
+    allRows = await res.json();
     const tbody = document.getElementById('table-body');
-    if (!rows || rows.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="5" class="empty">尚未有資料</td></tr>';
+    if (!allRows || allRows.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="6" class="empty">尚未有資料</td></tr>';
       updateStats([]); return;
     }
-    tbody.innerHTML = [...rows].reverse().map(r => `
-      <tr>
+    tbody.innerHTML = [...allRows].reverse().map((r, i) => {
+      const realIndex = allRows.length - i;
+      return `<tr>
         <td style="font-size:11px;color:#aaa">${String(r[0]).substring(5,16)}</td>
         <td><span style="font-family:monospace;font-size:12px">${r[1]}</span></td>
         <td style="color:#888;font-size:12px">${r[2] || '—'}</td>
         <td style="text-align:right;font-weight:600">${r[3]}</td>
         <td style="font-size:12px;color:#888">${r[4]}</td>
-      </tr>`).join('');
-    updateStats(rows);
+        <td><button class="del-btn" onclick="deleteRow(${realIndex + 1})">✕</button></td>
+      </tr>`;
+    }).join('');
+    updateStats(allRows);
   } catch(e) {}
 }
 
