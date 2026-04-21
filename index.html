@@ -9,24 +9,19 @@
   body { font-family: sans-serif; background: #f5f5f5; padding: 16px; }
   h2 { font-size: 18px; font-weight: 500; margin-bottom: 16px; color: #222; }
   .card { background: #fff; border-radius: 12px; padding: 16px; margin-bottom: 16px; border: 1px solid #e8e8e8; }
-  .scan-area { position: relative; width: 100%; border-radius: 8px; overflow: hidden; background: #000; aspect-ratio: 4/3; }
-  #preview { width: 100%; height: 100%; object-fit: cover; display: block; }
-  .scan-frame { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
-  .scan-frame-inner { width: 70%; height: 40%; border: 2px solid rgba(255,255,255,0.7); border-radius: 8px; }
-  .scan-line { position: absolute; left: 15%; right: 15%; height: 2px; background: #e24b4a; top: 50%; opacity: 0; animation: scan 1.8s ease-in-out infinite; }
-  .scan-line.active { opacity: 1; }
-  @keyframes scan { 0%,100%{top:30%} 50%{top:70%} }
   .result-box { background: #f0f7ff; border-radius: 8px; padding: 10px 14px; margin-top: 10px; display: none; }
   .result-label { font-size: 12px; color: #888; }
-  .result-code { font-family: monospace; font-size: 15px; font-weight: 600; color: #222; }
+  .result-code { font-family: monospace; font-size: 15px; font-weight: 600; color: #222; margin-top: 2px; }
   .field { margin-top: 10px; }
   .field label { font-size: 12px; color: #888; display: block; margin-bottom: 4px; }
   .field input { width: 100%; height: 40px; border: 1px solid #ddd; border-radius: 8px; padding: 0 12px; font-size: 15px; background: #fff; }
   .field input:focus { outline: none; border-color: #378add; }
-  .btn { width: 100%; height: 44px; border-radius: 8px; border: none; font-size: 15px; cursor: pointer; margin-top: 10px; }
-  .btn-cam { background: #f0f0f0; color: #333; }
+  .btn { width: 100%; height: 48px; border-radius: 8px; border: none; font-size: 16px; cursor: pointer; margin-top: 10px; font-weight: 500; }
+  .btn-scan { background: #f0f0f0; color: #333; }
   .btn-add { background: #222; color: #fff; }
   .btn:active { transform: scale(0.98); }
+  .btn-manual { background: none; border: none; color: #378add; font-size: 13px; cursor: pointer; margin-top: 8px; display: block; width: 100%; text-align: center; padding: 6px; }
+  .preview-img { width: 100%; border-radius: 8px; margin-top: 10px; display: none; max-height: 200px; object-fit: cover; }
   .summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 16px; }
   .metric { background: #f7f7f7; border-radius: 8px; padding: 10px; text-align: center; }
   .metric-label { font-size: 11px; color: #888; }
@@ -36,11 +31,11 @@
   td { padding: 10px 8px; border-bottom: 1px solid #f0f0f0; color: #333; }
   tr:last-child td { border-bottom: none; }
   .empty { text-align: center; padding: 24px; color: #bbb; font-size: 13px; }
-  .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #222; color: #fff; padding: 10px 20px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity 0.2s; pointer-events: none; white-space: nowrap; }
+  .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #222; color: #fff; padding: 10px 20px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity 0.2s; pointer-events: none; white-space: nowrap; z-index: 99; }
   .toast.show { opacity: 1; }
-  .status { font-size: 13px; color: #888; margin-bottom: 10px; }
-  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #ccc; margin-right: 6px; }
-  .dot.active { background: #1d9e75; }
+  .manual-input { display: none; margin-top: 10px; }
+  .manual-input.show { display: block; }
+  .hint { font-size: 12px; color: #aaa; text-align: center; margin-top: 8px; }
 </style>
 </head>
 <body>
@@ -48,30 +43,44 @@
 <h2>直播選品掃描</h2>
 
 <div class="card">
-  <div class="status"><span class="dot" id="dot"></span><span id="status-text">相機未開啟</span></div>
-  <div class="scan-area">
-    <video id="preview" autoplay playsinline muted></video>
-    <div class="scan-frame"><div class="scan-frame-inner"></div></div>
-    <div class="scan-line" id="scan-line"></div>
-  </div>
-  <button class="btn btn-cam" id="cam-btn" onclick="toggleCamera()">開啟相機掃描條碼</button>
+  <div class="result-label" style="margin-bottom:8px">步驟 1：掃描條碼</div>
+
+  <input type="file" id="file-input" accept="image/*" capture="environment" style="display:none" onchange="handleImage(this)">
+  <button class="btn btn-scan" onclick="document.getElementById('file-input').click()">拍照掃描條碼</button>
+  <p class="hint">點擊後用相機對準條碼拍照</p>
+
+  <img id="preview-img" class="preview-img" />
+
   <div class="result-box" id="result-box">
     <div class="result-label">掃描到的條碼</div>
     <div class="result-code" id="result-code">—</div>
   </div>
-  <div class="field">
-    <label>你的名字</label>
-    <input type="text" id="inp-staff" placeholder="例：小明" />
+
+  <button class="btn-manual" onclick="toggleManual()">手動輸入條碼</button>
+  <div class="manual-input" id="manual-input">
+    <div class="field">
+      <label>手動輸入條碼</label>
+      <input type="text" id="inp-barcode-manual" placeholder="例：4710742716980" />
+    </div>
+    <button class="btn btn-scan" style="margin-top:8px" onclick="useManual()">確認使用此條碼</button>
   </div>
-  <div class="field">
-    <label>數量</label>
-    <input type="number" id="inp-qty" placeholder="輸入數量" min="1" />
+
+  <div style="border-top: 1px solid #f0f0f0; margin-top: 16px; padding-top: 16px;">
+    <div class="result-label" style="margin-bottom:8px">步驟 2：填寫資料</div>
+    <div class="field">
+      <label>你的名字</label>
+      <input type="text" id="inp-staff" placeholder="例：小明" />
+    </div>
+    <div class="field">
+      <label>數量</label>
+      <input type="number" id="inp-qty" placeholder="輸入數量" min="1" />
+    </div>
+    <div class="field">
+      <label>備註（選填）</label>
+      <input type="text" id="inp-note" placeholder="例：白色短襪" />
+    </div>
+    <button class="btn btn-add" onclick="addItem()">加入清單</button>
   </div>
-  <div class="field">
-    <label>備註（選填）</label>
-    <input type="text" id="inp-note" placeholder="例：白色短襪" />
-  </div>
-  <button class="btn btn-add" onclick="addItem()">加入清單</button>
 </div>
 
 <div class="summary">
@@ -90,11 +99,11 @@
 
 <div class="toast" id="toast"></div>
 
+<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/zxing-wasm/dist/iife/zxing_wasm.js"></script>
 <script>
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbx3e5Q7BZRhHG0IwdmF2y4-fz64kT-3EKXO_5870UUoTIp7j4Bg9GnzHUwa6xWspANApw/exec';
-
-let scanning = false, stream = null, detector = null, scanLoop = null;
-let currentBarcode = '', scanCooldown = false;
+let currentBarcode = '';
 
 function showToast(msg) {
   const t = document.getElementById('toast');
@@ -103,57 +112,46 @@ function showToast(msg) {
   setTimeout(() => t.classList.remove('show'), 2500);
 }
 
-async function toggleCamera() {
-  scanning ? stopCamera() : startCamera();
+function toggleManual() {
+  const el = document.getElementById('manual-input');
+  el.classList.toggle('show');
 }
 
-async function startCamera() {
+function useManual() {
+  const val = document.getElementById('inp-barcode-manual').value.trim();
+  if (!val) { showToast('請輸入條碼'); return; }
+  currentBarcode = val;
+  document.getElementById('result-code').textContent = val;
+  document.getElementById('result-box').style.display = 'block';
+  document.getElementById('manual-input').classList.remove('show');
+  document.getElementById('inp-qty').focus();
+  showToast('已設定條碼：' + val);
+}
+
+async function handleImage(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const img = document.getElementById('preview-img');
+  img.src = URL.createObjectURL(file);
+  img.style.display = 'block';
+  showToast('辨識中...');
   try {
-    if (!('BarcodeDetector' in window)) {
-      showToast('此瀏覽器不支援掃描，請更新 iOS');
-      return;
+    const { readBarcodesFromImageFile, setZXingModuleOverrides } = ZXingWASM;
+    const results = await readBarcodesFromImageFile(file, { tryHarder: true });
+    if (results && results.length > 0) {
+      const code = results[0].text;
+      currentBarcode = code;
+      document.getElementById('result-code').textContent = code;
+      document.getElementById('result-box').style.display = 'block';
+      document.getElementById('inp-qty').focus();
+      showToast('掃描成功：' + code);
+    } else {
+      showToast('無法辨識，請重拍或手動輸入');
     }
-    detector = new BarcodeDetector({ formats: ['ean_13', 'ean_8', 'code_128', 'code_39', 'upc_a', 'upc_e'] });
-    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 960 } } });
-    const video = document.getElementById('preview');
-    video.srcObject = stream;
-    await video.play();
-    scanning = true;
-    document.getElementById('cam-btn').textContent = '關閉相機';
-    document.getElementById('dot').classList.add('active');
-    document.getElementById('status-text').textContent = '掃描中，請將條碼對準框內';
-    document.getElementById('scan-line').classList.add('active');
-    scanLoop = setInterval(async () => {
-      if (!scanning || scanCooldown) return;
-      try {
-        const barcodes = await detector.detect(video);
-        if (barcodes.length > 0) {
-          const code = barcodes[0].rawValue;
-          currentBarcode = code;
-          document.getElementById('result-code').textContent = code;
-          document.getElementById('result-box').style.display = 'block';
-          document.getElementById('status-text').textContent = '條碼已讀取，請輸入數量';
-          document.getElementById('inp-qty').focus();
-          scanCooldown = true;
-          showToast('掃描成功：' + code);
-          setTimeout(() => { scanCooldown = false; }, 3000);
-        }
-      } catch(e) {}
-    }, 300);
   } catch(e) {
-    showToast('無法開啟相機：' + e.message);
+    showToast('辨識失敗，請手動輸入條碼');
   }
-}
-
-function stopCamera() {
-  clearInterval(scanLoop);
-  if (stream) stream.getTracks().forEach(t => t.stop());
-  stream = null; scanning = false;
-  document.getElementById('preview').srcObject = null;
-  document.getElementById('cam-btn').textContent = '開啟相機掃描條碼';
-  document.getElementById('dot').classList.remove('active');
-  document.getElementById('status-text').textContent = '相機未開啟';
-  document.getElementById('scan-line').classList.remove('active');
+  input.value = '';
 }
 
 async function addItem() {
@@ -170,11 +168,11 @@ async function addItem() {
     showToast('已加入清單！');
     document.getElementById('inp-qty').value = '';
     document.getElementById('inp-note').value = '';
+    document.getElementById('inp-note').value = '';
     currentBarcode = '';
     document.getElementById('result-code').textContent = '—';
     document.getElementById('result-box').style.display = 'none';
-    scanCooldown = false;
-    document.getElementById('status-text').textContent = scanning ? '掃描中，請將條碼對準框內' : '相機未開啟';
+    document.getElementById('preview-img').style.display = 'none';
     loadItems();
   } catch(e) { showToast('儲存失敗，請重試'); }
 }
