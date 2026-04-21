@@ -15,7 +15,7 @@
   .scan-frame-inner { width: 70%; height: 40%; border: 2px solid rgba(255,255,255,0.7); border-radius: 8px; }
   .scan-line { position: absolute; left: 15%; right: 15%; height: 2px; background: #e24b4a; top: 50%; opacity: 0; animation: scan 1.8s ease-in-out infinite; }
   .scan-line.active { opacity: 1; }
-  @keyframes scan { 0%,100% { top: 30%; } 50% { top: 70%; } }
+  @keyframes scan { 0%,100%{top:30%} 50%{top:70%} }
   .result-box { background: #f0f7ff; border-radius: 8px; padding: 10px 14px; margin-top: 10px; display: none; }
   .result-label { font-size: 12px; color: #888; }
   .result-code { font-family: monospace; font-size: 15px; font-weight: 600; color: #222; }
@@ -48,7 +48,7 @@
 <h2>直播選品掃描</h2>
 
 <div class="card">
-  <div class="status"><span class="dot" id="dot"></span><span id="status-text">準備中...</span></div>
+  <div class="status"><span class="dot" id="dot"></span><span id="status-text">相機未開啟</span></div>
   <div class="scan-area">
     <video id="preview" autoplay playsinline muted></video>
     <div class="scan-frame"><div class="scan-frame-inner"></div></div>
@@ -90,16 +90,11 @@
 
 <div class="toast" id="toast"></div>
 
-<script type="module">
-import Quagga from 'https://esm.sh/quagga@0.12.1';
-
+<script>
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbx3e5Q7BZRhHG0IwdmF2y4-fz64kT-3EKXO_5870UUoTIp7j4Bg9GnzHUwa6xWspANApw/exec';
 
-let scanning = false;
-let currentBarcode = '';
-let scanCooldown = false;
-
-document.getElementById('status-text').textContent = '相機未開啟';
+let scanning = false, stream = null, detector = null, scanLoop = null;
+let currentBarcode = '', scanCooldown = false;
 
 function showToast(msg) {
   const t = document.getElementById('toast');
@@ -108,58 +103,60 @@ function showToast(msg) {
   setTimeout(() => t.classList.remove('show'), 2500);
 }
 
-window.toggleCamera = function() {
+async function toggleCamera() {
   scanning ? stopCamera() : startCamera();
 }
 
-function startCamera() {
-  Quagga.init({
-    inputStream: {
-      name: 'Live',
-      type: 'LiveStream',
-      target: document.getElementById('preview'),
-      constraints: { facingMode: 'environment' }
-    },
-    decoder: {
-      readers: ['ean_reader', 'ean_8_reader', 'code_128_reader', 'code_39_reader', 'upc_reader']
-    }
-  }, function(err) {
-    if (err) {
-      showToast('無法開啟相機，請確認已授權');
+async function startCamera() {
+  try {
+    if (!('BarcodeDetector' in window)) {
+      showToast('此瀏覽器不支援掃描，請更新 iOS');
       return;
     }
-    Quagga.start();
+    detector = new BarcodeDetector({ formats: ['ean_13', 'ean_8', 'code_128', 'code_39', 'upc_a', 'upc_e'] });
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 960 } } });
+    const video = document.getElementById('preview');
+    video.srcObject = stream;
+    await video.play();
     scanning = true;
     document.getElementById('cam-btn').textContent = '關閉相機';
     document.getElementById('dot').classList.add('active');
     document.getElementById('status-text').textContent = '掃描中，請將條碼對準框內';
     document.getElementById('scan-line').classList.add('active');
-  });
-
-  Quagga.onDetected(function(result) {
-    if (scanCooldown) return;
-    const code = result.codeResult.code;
-    currentBarcode = code;
-    document.getElementById('result-code').textContent = code;
-    document.getElementById('result-box').style.display = 'block';
-    document.getElementById('status-text').textContent = '條碼已讀取，請輸入數量';
-    document.getElementById('inp-qty').focus();
-    scanCooldown = true;
-    showToast('條碼掃描成功：' + code);
-    setTimeout(() => { scanCooldown = false; }, 3000);
-  });
+    scanLoop = setInterval(async () => {
+      if (!scanning || scanCooldown) return;
+      try {
+        const barcodes = await detector.detect(video);
+        if (barcodes.length > 0) {
+          const code = barcodes[0].rawValue;
+          currentBarcode = code;
+          document.getElementById('result-code').textContent = code;
+          document.getElementById('result-box').style.display = 'block';
+          document.getElementById('status-text').textContent = '條碼已讀取，請輸入數量';
+          document.getElementById('inp-qty').focus();
+          scanCooldown = true;
+          showToast('掃描成功：' + code);
+          setTimeout(() => { scanCooldown = false; }, 3000);
+        }
+      } catch(e) {}
+    }, 300);
+  } catch(e) {
+    showToast('無法開啟相機：' + e.message);
+  }
 }
 
 function stopCamera() {
-  Quagga.stop();
-  scanning = false;
+  clearInterval(scanLoop);
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  stream = null; scanning = false;
+  document.getElementById('preview').srcObject = null;
   document.getElementById('cam-btn').textContent = '開啟相機掃描條碼';
   document.getElementById('dot').classList.remove('active');
   document.getElementById('status-text').textContent = '相機未開啟';
   document.getElementById('scan-line').classList.remove('active');
 }
 
-window.addItem = async function() {
+async function addItem() {
   const barcode = currentBarcode;
   const qty = parseInt(document.getElementById('inp-qty').value);
   const note = document.getElementById('inp-note').value.trim();
@@ -189,11 +186,9 @@ async function loadItems() {
     const tbody = document.getElementById('table-body');
     if (!rows || rows.length === 0) {
       tbody.innerHTML = '<tr><td colspan="5" class="empty">尚未有資料</td></tr>';
-      updateStats([]);
-      return;
+      updateStats([]); return;
     }
-    const reversed = [...rows].reverse();
-    tbody.innerHTML = reversed.map(r => `
+    tbody.innerHTML = [...rows].reverse().map(r => `
       <tr>
         <td style="font-size:11px;color:#aaa">${String(r[0]).substring(5,16)}</td>
         <td><span style="font-family:monospace;font-size:12px">${r[1]}</span></td>
